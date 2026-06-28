@@ -1,15 +1,16 @@
-from fastapi import APIRouter
-from fastapi import UploadFile
-from fastapi import File
-
-import shutil
 import os
+import shutil
 
-from app.services.pdf_service import extract_text
+from fastapi import APIRouter, UploadFile, File, HTTPException
+
 from app.models.document import DocumentResponse
+from app.services.pdf_service import extract_text
+from app.rag.ingest import ingest_document
 
-router = APIRouter()
-
+router = APIRouter(
+    prefix="/documents",
+    tags=["Documents"]
+)
 
 UPLOAD_DIR = "uploads"
 
@@ -18,16 +19,38 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 @router.post("/upload", response_model=DocumentResponse)
 async def upload_pdf(file: UploadFile = File(...)):
+    """
+    Upload a healthcare claim or policy PDF,
+    extract its text,
+    chunk it,
+    generate embeddings,
+    and store it in the FAISS vector database.
+    """
 
-    filepath = os.path.join(UPLOAD_DIR, file.filename)
+    # Validate file type
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(
+            status_code=400,
+            detail="Only PDF files are allowed."
+        )
 
-    with open(filepath, "wb") as buffer:
+    # Save uploaded file
+    file_path = os.path.join(UPLOAD_DIR, file.filename)
+
+    with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    result = extract_text(filepath)
+    # Extract text from PDF
+    result = extract_text(file_path)
+
+    # Build FAISS vector database
+    ingest_document(
+        text=result["text"],
+        filename=file.filename
+    )
 
     return DocumentResponse(
         filename=file.filename,
         pages=result["pages"],
-        extracted_text=result["text"]
+        status="Document indexed successfully."
     )
